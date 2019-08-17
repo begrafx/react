@@ -8,14 +8,33 @@
  */
 
 import type {
-  ReactDOMEventResponder,
   ReactDOMResponderEvent,
   ReactDOMResponderContext,
   PointerType,
 } from 'shared/ReactDOMTypes';
+import type {ReactEventResponderListener} from 'shared/ReactTypes';
 
 import React from 'react';
 import {DiscreteEvent} from 'shared/ReactTypes';
+
+/**
+ * Types
+ */
+
+type FocusEvent = {|
+  target: Element | Document,
+  type: FocusEventType | FocusWithinEventType,
+  pointerType: PointerType,
+  timeStamp: number,
+|};
+
+type FocusState = {
+  focusTarget: null | Element | Document,
+  isFocused: boolean,
+  isFocusVisible: boolean,
+  pointerType: PointerType,
+  isEmulatingMouseEvents: boolean,
+};
 
 type FocusProps = {
   disabled: boolean,
@@ -25,21 +44,21 @@ type FocusProps = {
   onFocusVisibleChange: boolean => void,
 };
 
-type FocusState = {
-  focusTarget: null | Element | Document,
-  isFocused: boolean,
-  isLocalFocusVisible: boolean,
-  pointerType: PointerType,
-};
-
 type FocusEventType = 'focus' | 'blur' | 'focuschange' | 'focusvisiblechange';
 
-type FocusEvent = {|
-  target: Element | Document,
-  type: FocusEventType,
-  pointerType: PointerType,
-  timeStamp: number,
-|};
+type FocusWithinProps = {
+  disabled: boolean,
+  onFocusWithinChange: boolean => void,
+  onFocusWithinVisibleChange: boolean => void,
+};
+
+type FocusWithinEventType = 'focuswithinvisiblechange' | 'focuswithinchange';
+
+/**
+ * Shared between Focus and FocusWithin
+ */
+
+let isGlobalFocusVisible = true;
 
 const isMac =
   typeof window !== 'undefined' && window.navigator != null
@@ -48,29 +67,20 @@ const isMac =
 
 const targetEventTypes = ['focus', 'blur'];
 
-const rootEventTypes = [
-  'keydown',
-  'keyup',
-  'pointermove',
-  'pointerdown',
-  'pointerup',
-];
+const hasPointerEvents =
+  typeof window !== 'undefined' && window.PointerEvent != null;
 
-// If PointerEvents is not supported (e.g., Safari), also listen to touch and mouse events.
-if (typeof window !== 'undefined' && window.PointerEvent === undefined) {
-  rootEventTypes.push(
-    'mousemove',
-    'mousedown',
-    'mouseup',
-    'touchmove',
-    'touchstart',
-    'touchend',
-  );
+const rootEventTypes = hasPointerEvents
+  ? ['keydown', 'keyup', 'pointermove', 'pointerdown', 'pointerup']
+  : ['keydown', 'keyup', 'mousedown', 'touchmove', 'touchstart', 'touchend'];
+
+function isFunction(obj): boolean {
+  return typeof obj === 'function';
 }
 
 function createFocusEvent(
   context: ReactDOMResponderContext,
-  type: FocusEventType,
+  type: FocusEventType | FocusWithinEventType,
   target: Element | Document,
   pointerType: PointerType,
 ): FocusEvent {
@@ -82,124 +92,13 @@ function createFocusEvent(
   };
 }
 
-function dispatchFocusInEvents(
-  context: ReactDOMResponderContext,
-  props: FocusProps,
-  state: FocusState,
-) {
-  const pointerType = state.pointerType;
-  const target = ((state.focusTarget: any): Element | Document);
-  if (props.onFocus) {
-    const syntheticEvent = createFocusEvent(
-      context,
-      'focus',
-      target,
-      pointerType,
-    );
-    context.dispatchEvent(syntheticEvent, props.onFocus, DiscreteEvent);
-  }
-  if (props.onFocusChange) {
-    const listener = () => {
-      props.onFocusChange(true);
-    };
-    const syntheticEvent = createFocusEvent(
-      context,
-      'focuschange',
-      target,
-      pointerType,
-    );
-    context.dispatchEvent(syntheticEvent, listener, DiscreteEvent);
-  }
-  if (props.onFocusVisibleChange && state.isLocalFocusVisible) {
-    const listener = () => {
-      props.onFocusVisibleChange(true);
-    };
-    const syntheticEvent = createFocusEvent(
-      context,
-      'focusvisiblechange',
-      target,
-      pointerType,
-    );
-    context.dispatchEvent(syntheticEvent, listener, DiscreteEvent);
-  }
-}
-
-function dispatchFocusOutEvents(
-  context: ReactDOMResponderContext,
-  props: FocusProps,
-  state: FocusState,
-) {
-  const pointerType = state.pointerType;
-  const target = ((state.focusTarget: any): Element | Document);
-  if (props.onBlur) {
-    const syntheticEvent = createFocusEvent(
-      context,
-      'blur',
-      target,
-      pointerType,
-    );
-    context.dispatchEvent(syntheticEvent, props.onBlur, DiscreteEvent);
-  }
-  if (props.onFocusChange) {
-    const listener = () => {
-      props.onFocusChange(false);
-    };
-    const syntheticEvent = createFocusEvent(
-      context,
-      'focuschange',
-      target,
-      pointerType,
-    );
-    context.dispatchEvent(syntheticEvent, listener, DiscreteEvent);
-  }
-  dispatchFocusVisibleOutEvent(context, props, state);
-}
-
-function dispatchFocusVisibleOutEvent(
-  context: ReactDOMResponderContext,
-  props: FocusProps,
-  state: FocusState,
-) {
-  const pointerType = state.pointerType;
-  const target = ((state.focusTarget: any): Element | Document);
-  if (props.onFocusVisibleChange && state.isLocalFocusVisible) {
-    const listener = () => {
-      props.onFocusVisibleChange(false);
-    };
-    const syntheticEvent = createFocusEvent(
-      context,
-      'focusvisiblechange',
-      target,
-      pointerType,
-    );
-    context.dispatchEvent(syntheticEvent, listener, DiscreteEvent);
-    state.isLocalFocusVisible = false;
-  }
-}
-
-function unmountResponder(
-  context: ReactDOMResponderContext,
-  props: FocusProps,
-  state: FocusState,
-): void {
-  if (state.isFocused) {
-    dispatchFocusOutEvents(context, props, state);
-  }
-}
-
 function handleRootPointerEvent(
   event: ReactDOMResponderEvent,
   context: ReactDOMResponderContext,
-  props: FocusProps,
   state: FocusState,
+  callback: boolean => void,
 ): void {
-  const {type, target} = event;
-  // Ignore a Safari quirks where 'mousemove' is dispatched on the 'html'
-  // element when the window blurs.
-  if (type === 'mousemove' && target.nodeName === 'HTML') {
-    return;
-  }
-
+  const {type} = event;
   isGlobalFocusVisible = false;
 
   // Focus should stop being visible if a pointer is used on the element
@@ -207,24 +106,167 @@ function handleRootPointerEvent(
   const focusTarget = state.focusTarget;
   if (
     focusTarget !== null &&
-    context.isTargetWithinNode(event.target, focusTarget) &&
+    context.isTargetWithinResponderScope(focusTarget) &&
     (type === 'mousedown' || type === 'touchstart' || type === 'pointerdown')
   ) {
-    dispatchFocusVisibleOutEvent(context, props, state);
+    callback(false);
   }
 }
 
-let isGlobalFocusVisible = true;
+function handleRootEvent(
+  event: ReactDOMResponderEvent,
+  context: ReactDOMResponderContext,
+  state: FocusState,
+  callback: boolean => void,
+): void {
+  const {type} = event;
 
-const FocusResponder: ReactDOMEventResponder = {
-  displayName: 'Focus',
+  switch (type) {
+    case 'pointermove':
+    case 'pointerdown':
+    case 'pointerup': {
+      // $FlowFixMe: Flow doesn't know about PointerEvents
+      const nativeEvent = ((event.nativeEvent: any): PointerEvent);
+      state.pointerType = nativeEvent.pointerType;
+      handleRootPointerEvent(event, context, state, callback);
+      break;
+    }
+
+    case 'keydown':
+    case 'keyup': {
+      const nativeEvent = event.nativeEvent;
+      const focusTarget = state.focusTarget;
+      const {key, metaKey, altKey, ctrlKey} = (nativeEvent: any);
+      const validKey =
+        key === 'Enter' ||
+        key === ' ' ||
+        (key === 'Tab' && !(metaKey || (!isMac && altKey) || ctrlKey));
+
+      if (validKey) {
+        state.pointerType = 'keyboard';
+        isGlobalFocusVisible = true;
+        if (
+          focusTarget !== null &&
+          context.isTargetWithinResponderScope(focusTarget)
+        ) {
+          callback(true);
+        }
+      }
+      break;
+    }
+
+    // fallbacks for no PointerEvent support
+    case 'touchmove':
+    case 'touchstart':
+    case 'touchend': {
+      state.pointerType = 'touch';
+      state.isEmulatingMouseEvents = true;
+      handleRootPointerEvent(event, context, state, callback);
+      break;
+    }
+    case 'mousedown': {
+      if (!state.isEmulatingMouseEvents) {
+        state.pointerType = 'mouse';
+        handleRootPointerEvent(event, context, state, callback);
+      } else {
+        state.isEmulatingMouseEvents = false;
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * Focus Responder
+ */
+
+function dispatchFocusEvents(
+  context: ReactDOMResponderContext,
+  props: FocusProps,
+  state: FocusState,
+) {
+  const pointerType = state.pointerType;
+  const target = ((state.focusTarget: any): Element | Document);
+  const onFocus = props.onFocus;
+  if (isFunction(onFocus)) {
+    const syntheticEvent = createFocusEvent(
+      context,
+      'focus',
+      target,
+      pointerType,
+    );
+    context.dispatchEvent(syntheticEvent, onFocus, DiscreteEvent);
+  }
+  dispatchFocusChange(context, props, true);
+  if (state.isFocusVisible) {
+    dispatchFocusVisibleChangeEvent(context, props, true);
+  }
+}
+
+function dispatchBlurEvents(
+  context: ReactDOMResponderContext,
+  props: FocusProps,
+  state: FocusState,
+) {
+  const pointerType = state.pointerType;
+  const target = ((state.focusTarget: any): Element | Document);
+  const onBlur = props.onBlur;
+  if (isFunction(onBlur)) {
+    const syntheticEvent = createFocusEvent(
+      context,
+      'blur',
+      target,
+      pointerType,
+    );
+    context.dispatchEvent(syntheticEvent, onBlur, DiscreteEvent);
+  }
+  dispatchFocusChange(context, props, false);
+  if (state.isFocusVisible) {
+    dispatchFocusVisibleChangeEvent(context, props, false);
+  }
+}
+
+function dispatchFocusChange(
+  context: ReactDOMResponderContext,
+  props: FocusProps,
+  value: boolean,
+): void {
+  const onFocusChange = props.onFocusChange;
+  if (isFunction(onFocusChange)) {
+    context.dispatchEvent(value, onFocusChange, DiscreteEvent);
+  }
+}
+
+function dispatchFocusVisibleChangeEvent(
+  context: ReactDOMResponderContext,
+  props: FocusProps,
+  value: boolean,
+) {
+  const onFocusVisibleChange = props.onFocusVisibleChange;
+  if (isFunction(onFocusVisibleChange)) {
+    context.dispatchEvent(value, onFocusVisibleChange, DiscreteEvent);
+  }
+}
+
+function unmountFocusResponder(
+  context: ReactDOMResponderContext,
+  props: FocusProps,
+  state: FocusState,
+) {
+  if (state.isFocused) {
+    dispatchBlurEvents(context, props, state);
+  }
+}
+
+const focusResponderImpl = {
   targetEventTypes,
   rootEventTypes,
   getInitialState(): FocusState {
     return {
       focusTarget: null,
+      isEmulatingMouseEvents: false,
       isFocused: false,
-      isLocalFocusVisible: false,
+      isFocusVisible: false,
       pointerType: '',
     };
   },
@@ -238,7 +280,7 @@ const FocusResponder: ReactDOMEventResponder = {
 
     if (props.disabled) {
       if (state.isFocused) {
-        dispatchFocusOutEvents(context, props, state);
+        dispatchBlurEvents(context, props, state);
         state.isFocused = false;
         state.focusTarget = null;
       }
@@ -247,24 +289,34 @@ const FocusResponder: ReactDOMEventResponder = {
 
     switch (type) {
       case 'focus': {
-        if (!state.isFocused) {
-          // Limit focus events to the direct child of the event component.
-          // Browser focus is not expected to bubble.
-          state.focusTarget = event.responderTarget;
-          if (state.focusTarget === target) {
-            state.isFocused = true;
-            state.isLocalFocusVisible = isGlobalFocusVisible;
-            dispatchFocusInEvents(context, props, state);
-          }
+        state.focusTarget = event.responderTarget;
+        // Limit focus events to the direct child of the event component.
+        // Browser focus is not expected to bubble.
+        if (!state.isFocused && state.focusTarget === target) {
+          state.isFocused = true;
+          state.isFocusVisible = isGlobalFocusVisible;
+          dispatchFocusEvents(context, props, state);
         }
+        state.isEmulatingMouseEvents = false;
         break;
       }
       case 'blur': {
         if (state.isFocused) {
-          dispatchFocusOutEvents(context, props, state);
+          dispatchBlurEvents(context, props, state);
+          state.isFocusVisible = isGlobalFocusVisible;
           state.isFocused = false;
-          state.focusTarget = null;
         }
+        // This covers situations where focus is lost to another document in
+        // the same window (e.g., iframes). Any action that restores focus to
+        // the document (e.g., touch or click) first causes 'focus' to be
+        // dispatched, which means the 'pointerType' we provide is stale
+        // (it reflects the *previous* pointer). We cannot determine the
+        // 'pointerType' in this case, so a blur with no
+        // relatedTarget is used as a signal to reset the 'pointerType'.
+        if (event.nativeEvent.relatedTarget == null) {
+          state.pointerType = '';
+        }
+        state.isEmulatingMouseEvents = false;
         break;
       }
     }
@@ -275,69 +327,180 @@ const FocusResponder: ReactDOMEventResponder = {
     props: FocusProps,
     state: FocusState,
   ): void {
-    const {type} = event;
-
-    switch (type) {
-      case 'mousemove':
-      case 'mousedown':
-      case 'mouseup': {
-        state.pointerType = 'mouse';
-        handleRootPointerEvent(event, context, props, state);
-        break;
+    handleRootEvent(event, context, state, isFocusVisible => {
+      if (state.isFocused && state.isFocusVisible !== isFocusVisible) {
+        state.isFocusVisible = isFocusVisible;
+        dispatchFocusVisibleChangeEvent(context, props, isFocusVisible);
       }
-      case 'pointermove':
-      case 'pointerdown':
-      case 'pointerup': {
-        // $FlowFixMe: Flow doesn't know about PointerEvents
-        const nativeEvent = ((event.nativeEvent: any): PointerEvent);
-        state.pointerType = nativeEvent.pointerType;
-        handleRootPointerEvent(event, context, props, state);
-        break;
-      }
-      case 'touchmove':
-      case 'touchstart':
-      case 'touchend': {
-        state.pointerType = 'touch';
-        handleRootPointerEvent(event, context, props, state);
-        break;
-      }
-
-      case 'keydown':
-      case 'keyup': {
-        const nativeEvent = event.nativeEvent;
-        if (
-          nativeEvent.key === 'Tab' &&
-          !(
-            nativeEvent.metaKey ||
-            (!isMac && nativeEvent.altKey) ||
-            nativeEvent.ctrlKey
-          )
-        ) {
-          state.pointerType = 'keyboard';
-          isGlobalFocusVisible = true;
-        }
-        break;
-      }
-    }
+    });
   },
   onUnmount(
     context: ReactDOMResponderContext,
     props: FocusProps,
     state: FocusState,
   ) {
-    unmountResponder(context, props, state);
+    unmountFocusResponder(context, props, state);
   },
   onOwnershipChange(
     context: ReactDOMResponderContext,
     props: FocusProps,
     state: FocusState,
   ) {
-    unmountResponder(context, props, state);
+    unmountFocusResponder(context, props, state);
   },
 };
 
-export const Focus = React.unstable_createEvent(FocusResponder);
+export const FocusResponder = React.unstable_createResponder(
+  'Focus',
+  focusResponderImpl,
+);
 
-export function useFocus(props: FocusProps): void {
-  React.unstable_useEvent(Focus, props);
+export function useFocusResponder(
+  props: FocusProps,
+): ReactEventResponderListener<any, any> {
+  return React.unstable_useResponder(FocusResponder, props);
+}
+
+/**
+ * FocusWithin Responder
+ */
+
+function dispatchFocusWithinChangeEvent(
+  context: ReactDOMResponderContext,
+  props: FocusWithinProps,
+  state: FocusState,
+  value: boolean,
+) {
+  const onFocusWithinChange = props.onFocusWithinChange;
+  if (isFunction(onFocusWithinChange)) {
+    context.dispatchEvent(value, onFocusWithinChange, DiscreteEvent);
+  }
+  if (state.isFocusVisible) {
+    dispatchFocusWithinVisibleChangeEvent(context, props, state, value);
+  }
+}
+
+function dispatchFocusWithinVisibleChangeEvent(
+  context: ReactDOMResponderContext,
+  props: FocusWithinProps,
+  state: FocusState,
+  value: boolean,
+) {
+  const onFocusWithinVisibleChange = props.onFocusWithinVisibleChange;
+  if (isFunction(onFocusWithinVisibleChange)) {
+    context.dispatchEvent(value, onFocusWithinVisibleChange, DiscreteEvent);
+  }
+}
+
+function unmountFocusWithinResponder(
+  context: ReactDOMResponderContext,
+  props: FocusWithinProps,
+  state: FocusState,
+) {
+  if (state.isFocused) {
+    dispatchFocusWithinChangeEvent(context, props, state, false);
+  }
+}
+
+const focusWithinResponderImpl = {
+  targetEventTypes,
+  rootEventTypes,
+  getInitialState(): FocusState {
+    return {
+      focusTarget: null,
+      isEmulatingMouseEvents: false,
+      isFocused: false,
+      isFocusVisible: false,
+      pointerType: '',
+    };
+  },
+  onEvent(
+    event: ReactDOMResponderEvent,
+    context: ReactDOMResponderContext,
+    props: FocusWithinProps,
+    state: FocusState,
+  ): void {
+    const {nativeEvent, type} = event;
+    const relatedTarget = (nativeEvent: any).relatedTarget;
+
+    if (props.disabled) {
+      if (state.isFocused) {
+        dispatchFocusWithinChangeEvent(context, props, state, false);
+        state.isFocused = false;
+        state.focusTarget = null;
+      }
+      return;
+    }
+
+    switch (type) {
+      case 'focus': {
+        state.focusTarget = event.responderTarget;
+        // Limit focus events to the direct child of the event component.
+        // Browser focus is not expected to bubble.
+        if (!state.isFocused) {
+          state.isFocused = true;
+          state.isFocusVisible = isGlobalFocusVisible;
+          dispatchFocusWithinChangeEvent(context, props, state, true);
+        }
+        if (!state.isFocusVisible && isGlobalFocusVisible) {
+          state.isFocusVisible = isGlobalFocusVisible;
+          dispatchFocusWithinVisibleChangeEvent(context, props, state, true);
+        }
+        break;
+      }
+      case 'blur': {
+        if (
+          state.isFocused &&
+          !context.isTargetWithinResponder(relatedTarget)
+        ) {
+          dispatchFocusWithinChangeEvent(context, props, state, false);
+          state.isFocused = false;
+        }
+        break;
+      }
+    }
+  },
+  onRootEvent(
+    event: ReactDOMResponderEvent,
+    context: ReactDOMResponderContext,
+    props: FocusWithinProps,
+    state: FocusState,
+  ): void {
+    handleRootEvent(event, context, state, isFocusVisible => {
+      if (state.isFocused && state.isFocusVisible !== isFocusVisible) {
+        state.isFocusVisible = isFocusVisible;
+        dispatchFocusWithinVisibleChangeEvent(
+          context,
+          props,
+          state,
+          isFocusVisible,
+        );
+      }
+    });
+  },
+  onUnmount(
+    context: ReactDOMResponderContext,
+    props: FocusWithinProps,
+    state: FocusState,
+  ) {
+    unmountFocusWithinResponder(context, props, state);
+  },
+  onOwnershipChange(
+    context: ReactDOMResponderContext,
+    props: FocusWithinProps,
+    state: FocusState,
+  ) {
+    unmountFocusWithinResponder(context, props, state);
+  },
+};
+
+export const FocusWithinResponder = React.unstable_createResponder(
+  'FocusWithin',
+  focusWithinResponderImpl,
+);
+
+export function useFocusWithinResponder(
+  props: FocusWithinProps,
+): ReactEventResponderListener<any, any> {
+  return React.unstable_useResponder(FocusWithinResponder, props);
 }
